@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Street Light — IoT Dashboard</title>
+  <meta name="description" content="Real-time Smart Street Light monitoring dashboard powered by ESP32 and Flask." />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <!-- Lucide icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+          colors: {
+            brand: { 400: '#a78bfa', 500: '#8b5cf6', 600: '#7c3aed' },
+            night: { 800: '#0f0f1a', 900: '#08080f' },
+          },
+          backdropBlur: { xs: '2px' },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: radial-gradient(ellipse at 20% 50%, #1a0533 0%, #08080f 50%, #001133 100%);
+      min-height: 100vh;
+    }
+
+    /* Animated star field */
+    .stars { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    .star {
+      position: absolute; border-radius: 50%;
+      background: #fff; opacity: 0;
+      animation: twinkle var(--d, 4s) var(--delay, 0s) infinite ease-in-out;
+    }
+    @keyframes twinkle {
+      0%,100% { opacity: 0; transform: scale(0.8); }
+      50%      { opacity: var(--op, 0.7); transform: scale(1.2); }
+    }
+
+    /* Glass card */
+    .glass {
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 1.25rem;
+      transition: border-color .3s, box-shadow .3s, transform .3s;
+    }
+    .glass:hover {
+      border-color: rgba(167,139,250,0.3);
+      box-shadow: 0 0 40px rgba(139,92,246,0.12);
+      transform: translateY(-2px);
+    }
+
+    /* Status badge */
+    .badge-on  { background: rgba(34,197,94,.15); border:1px solid rgba(34,197,94,.4); color:#4ade80; }
+    .badge-off { background: rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.3);  color:#f87171; }
+
+    /* Glow ring around light icon */
+    .glow-green { box-shadow: 0 0 30px rgba(74,222,128,.45), 0 0 60px rgba(74,222,128,.2); }
+    .glow-red   { box-shadow: 0 0 30px rgba(248,113,113,.45), 0 0 60px rgba(248,113,113,.2); }
+
+    /* Pulse dot */
+    .pulse-dot {
+      width: 10px; height: 10px; border-radius: 50%; background:#4ade80;
+      animation: pulse-ring 1.5s ease-out infinite;
+    }
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 rgba(74,222,128,.6); }
+      70%  { box-shadow: 0 0 0 10px rgba(74,222,128,0); }
+      100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+    }
+
+    /* Stat counter animation */
+    .stat-value { transition: all .4s ease; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(255,255,255,.03); }
+    ::-webkit-scrollbar-thumb { background: rgba(139,92,246,.4); border-radius: 3px; }
+
+    /* Chart tooltip */
+    .chartjs-tooltip { font-family: 'JetBrains Mono', monospace !important; }
+
+    /* Table row hover */
+    .tbl-row { transition: background .2s; }
+    .tbl-row:hover { background: rgba(139,92,246,.08); }
+
+    /* Navbar blur */
+    .nav-glass {
+      background: rgba(8,8,15,.7);
+      backdrop-filter: blur(24px);
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+
+    /* Gradient text */
+    .gradient-text {
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Animated border for active card */
+    @keyframes border-spin {
+      from { --angle: 0deg; }
+      to   { --angle: 360deg; }
+    }
+  </style>
+</head>
+
+<body class="text-gray-100 relative">
+
+  <!-- Star field -->
+  <div class="stars" id="starField"></div>
+
+  <!-- ═══════════════════════ NAVBAR ═══════════════════════ -->
+  <nav class="nav-glass sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center shadow-lg shadow-violet-500/30">
+        <i data-lucide="zap" class="w-4 h-4 text-white"></i>
+      </div>
+      <div>
+        <p class="font-bold text-sm leading-none">SmartLight <span class="gradient-text">IoT</span></p>
+        <p class="text-xs text-gray-500 font-mono">v2.0.0</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <!-- Live indicator -->
+      <div class="flex items-center gap-2 text-xs text-gray-400">
+        <div class="pulse-dot"></div>
+        <span>Live</span>
+      </div>
+
+      <!-- Server clock -->
+      <div class="hidden sm:block glass px-3 py-1.5 text-xs font-mono text-violet-300" id="navClock">--:--:--</div>
+
+      <!-- Simulate button -->
+      <button onclick="simulateDetection()" id="simBtn"
+        class="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 text-xs font-semibold hover:from-violet-500 hover:to-blue-500 transition-all shadow-lg shadow-violet-500/20 active:scale-95">
+        <i data-lucide="radio" class="w-3.5 h-3.5"></i>
+        Simulate Detection
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════ MAIN ═══════════════════════ -->
+  <main class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
+    <!-- Page header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold gradient-text">Smart Street Light Dashboard</h1>
+        <p class="text-gray-500 text-sm mt-0.5">Real-time vehicle detection &amp; street light management</p>
+      </div>
+      <div class="glass px-4 py-2 flex items-center gap-2 text-sm self-start">
+        <i data-lucide="map-pin" class="w-4 h-4 text-violet-400"></i>
+        <span class="text-gray-300">Main Road — Sector 7</span>
+      </div>
+    </div>
+
+    <!-- ── KPI CARDS ── -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+
+      <!-- Total Vehicles -->
+      <div class="glass p-5 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-medium text-gray-400 uppercase tracking-widest">Total Vehicles</p>
+          <div class="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center">
+            <i data-lucide="car" class="w-4 h-4 text-violet-400"></i>
+          </div>
+        </div>
+        <p class="stat-value text-3xl font-extrabold" id="kpiTotal">—</p>
+        <p class="text-xs text-gray-500">All-time detections</p>
+      </div>
+
+      <!-- Today -->
+      <div class="glass p-5 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-medium text-gray-400 uppercase tracking-widest">Today</p>
+          <div class="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center">
+            <i data-lucide="calendar" class="w-4 h-4 text-blue-400"></i>
+          </div>
+        </div>
+        <p class="stat-value text-3xl font-extrabold" id="kpiToday">—</p>
+        <p class="text-xs text-gray-500">Vehicles detected today</p>
+      </div>
+
+      <!-- Last Hour -->
+      <div class="glass p-5 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-medium text-gray-400 uppercase tracking-widest">Last Hour</p>
+          <div class="w-8 h-8 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+            <i data-lucide="clock" class="w-4 h-4 text-cyan-400"></i>
+          </div>
+        </div>
+        <p class="stat-value text-3xl font-extrabold" id="kpiHour">—</p>
+        <p class="text-xs text-gray-500">In the last 60 minutes</p>
+      </div>
+
+      <!-- Peak Hour -->
+      <div class="glass p-5 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-medium text-gray-400 uppercase tracking-widest">Peak Hour</p>
+          <div class="w-8 h-8 rounded-lg bg-amber-500/15 flex items-center justify-center">
+            <i data-lucide="trending-up" class="w-4 h-4 text-amber-400"></i>
+          </div>
+        </div>
+        <p class="stat-value text-3xl font-extrabold font-mono" id="kpiPeak">—</p>
+        <p class="text-xs text-gray-500">Busiest hour today</p>
+      </div>
+    </div>
+
+    <!-- ── STREET LIGHT STATUS + CHART ── -->
+    <div class="grid lg:grid-cols-3 gap-4">
+
+      <!-- Light Status Card -->
+      <div class="glass p-6 flex flex-col items-center justify-center gap-5 text-center lg:col-span-1">
+        <p class="text-xs font-medium text-gray-400 uppercase tracking-widest self-start">Street Light Status</p>
+
+        <!-- Light Bulb Icon -->
+        <div id="lightIcon"
+          class="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 bg-gray-800/60">
+          <i data-lucide="lightbulb" id="lightBulbIcon" class="w-12 h-12 text-gray-600 transition-colors duration-700"></i>
+        </div>
+
+        <!-- Badge -->
+        <div id="lightBadge" class="px-4 py-1.5 rounded-full text-sm font-bold badge-off">— —</div>
+
+        <div class="w-full space-y-1">
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-500">Day starts</span>
+            <span class="font-mono text-gray-300">06:00</span>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-500">Night starts</span>
+            <span class="font-mono text-gray-300">18:00</span>
+          </div>
+          <div class="flex justify-between text-xs mt-2">
+            <span class="text-gray-500">Server time</span>
+            <span class="font-mono text-violet-300 text-xs" id="serverTime">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hourly Chart -->
+      <div class="glass p-5 lg:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+          <p class="text-sm font-semibold text-gray-200">24-Hour Traffic Flow</p>
+          <span class="text-xs font-mono text-gray-500">vehicles / hour</span>
+        </div>
+        <div class="relative h-48">
+          <canvas id="hourlyChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── WEEKLY CHART ── -->
+    <div class="glass p-5">
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-sm font-semibold text-gray-200">7-Day Traffic Overview</p>
+        <span class="text-xs text-gray-500 flex items-center gap-1">
+          <i data-lucide="bar-chart-2" class="w-3.5 h-3.5"></i>
+          Daily totals
+        </span>
+      </div>
+      <div class="relative h-44">
+        <canvas id="weeklyChart"></canvas>
+      </div>
+    </div>
+
+    <!-- ── RECENT EVENTS ── -->
+    <div class="glass p-5">
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-sm font-semibold text-gray-200">Recent Detection Events</p>
+        <div class="flex items-center gap-1.5 text-xs text-gray-500">
+          <div class="pulse-dot w-2 h-2"></div>
+          Auto-refresh 3s
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-white/5">
+              <th class="pb-2 text-left font-medium">#</th>
+              <th class="pb-2 text-left font-medium">Timestamp</th>
+              <th class="pb-2 text-left font-medium">Sensor</th>
+              <th class="pb-2 text-left font-medium">Location</th>
+              <th class="pb-2 text-left font-medium">Type</th>
+              <th class="pb-2 text-right font-medium">Speed</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody" class="divide-y divide-white/5">
+            <tr>
+              <td colspan="6" class="py-6 text-center text-gray-600">Waiting for data…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="text-center text-xs text-gray-700 pb-4">
+      Smart Street Light IoT System &copy; 2024 &mdash; ESP32 + Flask + SQLite
+    </p>
+  </main>
+
+  <!-- ═══════════════════════ JAVASCRIPT ═══════════════════════ -->
+  <script>
+  // ── Lucide icons init
+  lucide.createIcons();
+
+  // ── Generate star field
+  (function () {
+    const sf = document.getElementById('starField');
+    for (let i = 0; i < 120; i++) {
+      const s = document.createElement('div');
+      const size = Math.random() * 2.5 + 0.5;
+      s.className = 'star';
+      s.style.cssText = `
+        left:${Math.random()*100}%; top:${Math.random()*100}%;
+        width:${size}px; height:${size}px;
+        --d:${(Math.random()*4+2).toFixed(1)}s;
+        --delay:${(Math.random()*6).toFixed(1)}s;
+        --op:${(Math.random()*0.6+0.2).toFixed(2)};
+      `;
+      sf.appendChild(s);
+    }
+  })();
+
+  // ══════════════════════════════════════════════════
+  // Chart.js — shared defaults
+  // ══════════════════════════════════════════════════
+  Chart.defaults.color = 'rgba(255,255,255,0.45)';
+  Chart.defaults.font.family = "'JetBrains Mono', monospace";
+  Chart.defaults.font.size = 11;
+
+  const gridColor = 'rgba(255,255,255,0.05)';
+  const violetGrad = (ctx) => {
+    const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+    g.addColorStop(0, 'rgba(139,92,246,0.5)');
+    g.addColorStop(1, 'rgba(139,92,246,0)');
+    return g;
+  };
+
+  // Hourly Chart
+  const hourlyChart = new Chart(document.getElementById('hourlyChart'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Vehicles',
+        data: [],
+        borderColor: '#8b5cf6',
+        backgroundColor: violetGrad,
+        borderWidth: 2,
+        pointRadius: 3,
+        pointBackgroundColor: '#8b5cf6',
+        pointHoverRadius: 5,
+        tension: 0.4,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,15,26,0.95)',
+          borderColor: 'rgba(139,92,246,0.4)',
+          borderWidth: 1,
+          padding: 10,
+          callbacks: { label: ctx => ` ${ctx.parsed.y} vehicle(s)` },
+        },
+      },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { maxTicksLimit: 8 } },
+        y: { grid: { color: gridColor }, beginAtZero: true, ticks: { stepSize: 1 } },
+      },
+    },
+  });
+
+  // Weekly Bar Chart
+  const weeklyChart = new Chart(document.getElementById('weeklyChart'), {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Vehicles',
+        data: [],
+        backgroundColor: 'rgba(96,165,250,0.25)',
+        borderColor: '#60a5fa',
+        borderWidth: 1.5,
+        borderRadius: 6,
+        borderSkipped: false,
+        hoverBackgroundColor: 'rgba(96,165,250,0.45)',
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(15,15,26,0.95)',
+          borderColor: 'rgba(96,165,250,0.4)',
+          borderWidth: 1,
+          padding: 10,
+        },
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { grid: { color: gridColor }, beginAtZero: true, ticks: { stepSize: 1 } },
+      },
+    },
+  });
+
+  // ══════════════════════════════════════════════════
+  // Helpers
+  // ══════════════════════════════════════════════════
+  function animateValue(el, newVal) {
+    if (!el) return;
+    const current = parseInt(el.textContent.replace(/\D/g, '')) || 0;
+    if (current === newVal) return;
+    const step = newVal > current ? 1 : -1;
+    const diff = Math.abs(newVal - current);
+    const duration = Math.min(diff * 30, 600);
+    const steps = Math.max(diff, 1);
+    const interval = duration / steps;
+    let count = 0;
+    const timer = setInterval(() => {
+      count++;
+      el.textContent = current + step * count;
+      if (count >= diff) clearInterval(timer);
+    }, interval);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return '—';
+    try { return new Date(ts).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit' }); }
+    catch { return ts; }
+  }
+
+  const vehicleTypeColors = {
+    car:   'text-blue-400',
+    truck: 'text-amber-400',
+    bike:  'text-green-400',
+    bus:   'text-pink-400',
+  };
+
+  // ══════════════════════════════════════════════════
+  // Update light status UI
+  // ══════════════════════════════════════════════════
+  function updateLightUI(status) {
+    const icon  = document.getElementById('lightIcon');
+    const bulb  = document.getElementById('lightBulbIcon');
+    const badge = document.getElementById('lightBadge');
+
+    if (status === 'ON') {
+      icon.className  = 'w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 bg-green-500/10 glow-green';
+      bulb.className  = 'w-12 h-12 text-green-400 transition-colors duration-700';
+      badge.className = 'px-4 py-1.5 rounded-full text-sm font-bold badge-on';
+      badge.textContent = '🟢  LIGHT ON';
+    } else {
+      icon.className  = 'w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 bg-red-500/10 glow-red';
+      bulb.className  = 'w-12 h-12 text-red-400 transition-colors duration-700';
+      badge.className = 'px-4 py-1.5 rounded-full text-sm font-bold badge-off';
+      badge.textContent = '🔴  LIGHT OFF';
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // Render events table
+  // ══════════════════════════════════════════════════
+  function renderEvents(events) {
+    const tbody = document.getElementById('eventsTableBody');
+    if (!events || events.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-gray-600">No events recorded yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = events.map((e, i) => {
+      const typeColor = vehicleTypeColors[e.vehicle_type?.toLowerCase()] || 'text-gray-400';
+      return `
+      <tr class="tbl-row">
+        <td class="py-2.5 pr-4 text-gray-600 font-mono">${e.id}</td>
+        <td class="py-2.5 pr-4 font-mono text-gray-300">${formatTimestamp(e.detected_at)}</td>
+        <td class="py-2.5 pr-4 text-violet-300">${e.sensor_id || '—'}</td>
+        <td class="py-2.5 pr-4 text-gray-400">${e.location || '—'}</td>
+        <td class="py-2.5 pr-4 font-medium ${typeColor} capitalize">${e.vehicle_type || 'Unknown'}</td>
+        <td class="py-2.5 text-right font-mono text-cyan-300">${e.speed_kmh != null ? e.speed_kmh.toFixed(1)+' km/h' : '—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════════════
+  // Fetch & refresh — called every 3 s
+  // ══════════════════════════════════════════════════
+  let lastTotal = null;
+
+  async function fetchStatus() {
+    try {
+      const res  = await fetch('/api/status');
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+
+      // KPIs
+      animateValue(document.getElementById('kpiTotal'), data.total_count);
+      animateValue(document.getElementById('kpiToday'), data.today_count);
+      animateValue(document.getElementById('kpiHour'),  data.last_hour_count);
+      document.getElementById('kpiPeak').textContent = data.peak_hour;
+
+      // Clock
+      document.getElementById('serverTime').textContent = data.server_time;
+      document.getElementById('navClock').textContent   = data.server_time?.slice(-8) || '';
+
+      // Light
+      updateLightUI(data.light_status);
+
+      // Hourly chart
+      hourlyChart.data.labels   = data.hourly_data.map(d => d.hour);
+      hourlyChart.data.datasets[0].data = data.hourly_data.map(d => d.count);
+      hourlyChart.update('none');
+
+      // Events table
+      renderEvents(data.recent_events);
+
+      lastTotal = data.total_count;
+    } catch (err) {
+      console.error('Fetch status error:', err);
+    }
+  }
+
+  async function fetchWeekly() {
+    try {
+      const res  = await fetch('/api/stats/weekly');
+      if (!res.ok) return;
+      const data = await res.json();
+      weeklyChart.data.labels   = data.weekly.map(d => d.day);
+      weeklyChart.data.datasets[0].data = data.weekly.map(d => d.count);
+      weeklyChart.update('none');
+    } catch (err) {
+      console.error('Fetch weekly error:', err);
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // Simulate detection (dev only)
+  // ══════════════════════════════════════════════════
+  async function simulateDetection() {
+    const btn = document.getElementById('simBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="animate-spin inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full"></span> Sending…';
+    try {
+      await fetch('/api/simulate', { method: 'POST' });
+      await fetchStatus();
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<svg class="w-3.5 h-3.5" …></svg> Simulate Detection';
+      lucide.createIcons();
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // Bootstrap
+  // ══════════════════════════════════════════════════
+  fetchStatus();
+  fetchWeekly();
+
+  setInterval(fetchStatus,  3000);
+  setInterval(fetchWeekly, 30000);
+  </script>
+</body>
+</html>
