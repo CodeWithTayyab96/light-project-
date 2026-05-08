@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Login — SmartLight IoT</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
+<style>
+  body { font-family: 'Inter', sans-serif; background: #04040f; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .login-card { background: #11111d; border: 1px solid #222235; padding: 2.5rem; border-radius: 1.5rem; width: 100%; max-width: 400px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+  input { background: #1a1a2e; border: 2px solid #33334d; border-radius: 0.75rem; padding: 0.85rem; color: white; width: 100%; outline: none; margin-bottom: 1.25rem; transition: border-color 0.2s; }
+  input:focus { border-color: #7c3aed; }
+  button { background: #7c3aed; color: white; font-weight: bold; padding: 0.85rem; border-radius: 0.75rem; width: 100%; cursor: pointer; border: none; transition: background 0.2s; }
+  button:hover { background: #6d28d9; }
+  .error { color: #f87171; font-size: 0.875rem; margin-bottom: 1rem; display: none; text-align: center; }
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="text-center mb-8">
+    <h1 class="text-3xl font-bold mb-2">🚗 SmartLight <span class="text-violet-500">IoT</span></h1>
+    <p class="text-gray-400 text-sm">Please sign in to access the dashboard</p>
+  </div>
+  
+  <div id="errorMsg" class="error">Invalid username or password</div>
+  
+  <form id="loginForm">
+    <label class="block text-xs font-bold text-violet-400 uppercase mb-2">Username</label>
+    <input type="text" id="username" placeholder="Enter username" required>
+    
+    <label class="block text-xs font-bold text-violet-400 uppercase mb-2">Password</label>
+    <input type="password" id="password" placeholder="••••••••" required>
+    
+    <button type="submit" id="loginBtn" class="mb-4">Login to Dashboard</button>
+    
+    <div class="text-center">
+      <button type="button" onclick="forgotPass()" class="text-violet-400 text-xs hover:underline">Forgot your password?</button>
+    </div>
+  </form>
+</div>
+
+<script>
+  function forgotPass() {
+    alert("For security reasons, password resets must be requested via the System Administrator. Please contact support@university.edu or visit the IT office.");
+  }
+
+  // Check if already logged in
+  if (localStorage.getItem('isLoggedIn') === 'true') {
+    window.location.href = '/';
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const user = document.getElementById('username').value;
+    const pass = document.getElementById('password').value;
+    const btn = document.getElementById('loginBtn');
+    const err = document.getElementById('errorMsg');
+
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    err.style.display = 'none';
+
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: user, password: pass })
+      });
+
+      if (response.ok) {
+        localStorage.setItem('isLoggedIn', 'true');
+        localStorage.setItem('currentUser', user);
+        window.location.href = '/';
+      } else {
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Login to Dashboard';
+      }
+    } catch (e) {
+      alert('Connection Error');
+      btn.disabled = false;
+      btn.textContent = 'Login to Dashboard';
+    }
+  });
+</script>
+</body>
+</html>

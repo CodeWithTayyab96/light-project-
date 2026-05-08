@@ -23,7 +23,7 @@ const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 // ── Flask server  (your PC's LAN IP) ──────────────────────────
 // NOTE: The server's ALLOWED_IPS must include this ESP32's IP!
-const char* SERVER_URL = "http://192.168.1.3:5000/api/detect";
+const char* SERVER_URL = "http://192.168.1.6:5000/api/detect";
 const char* API_KEY    = "esp32-secret-key-2024";
 
 // ── Hardware pins ─────────────────────────────────────────────
@@ -58,9 +58,17 @@ void setup() {
 
 // ─────────────────────────────────────────────────────────────
 void loop() {
-  server.handleClient();   // Handle Flask commands
+  server.handleClient();   // Handle local commands (if on same network)
 
   handleIRSensor();        // Check vehicle detection
+  
+  // Cloud Sync: Ask the server for the light status every 5 seconds
+  static unsigned long lastSync = 0;
+  if (millis() - lastSync > 5000) {
+    lastSync = millis();
+    syncWithServer();
+  }
+
   updateLightOutput();     // Apply current light mode
 }
 
@@ -168,6 +176,38 @@ void sendDetectionEvent() {
     Serial.printf("[HTTP] Sent → %d\n", code);
   } else {
     Serial.printf("[HTTP] Error: %s\n", http.errorToString(code).c_str());
+  }
+  http.end();
+}
+
+// ════════════════════════════════════════════════════════════
+// Sync with Server (Cloud Polling)
+// ════════════════════════════════════════════════════════════
+void syncWithServer() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  // Use your Cloud URL here!
+  String url = String(SERVER_URL);
+  url.replace("/detect", "/esp32/sync"); 
+  
+  http.begin(url);
+  http.addHeader("X-API-Key", API_KEY);
+  
+  int code = http.GET();
+  if (code == 200) {
+    String payload = http.getString();
+    StaticJsonDocument<256> doc;
+    deserializeJson(doc, payload);
+    
+    String serverLight = doc["light"]; // "ON" or "OFF"
+    
+    if (serverLight == "ON") {
+      lightMode = FORCE_ON;
+    } else {
+      lightMode = FORCE_OFF;
+    }
+    Serial.println("[Sync] Server says light should be: " + serverLight);
   }
   http.end();
 }

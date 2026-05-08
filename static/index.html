@@ -3,352 +3,224 @@
 <head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>SmartLight IoT — Dashboard</title>
-<meta name="description" content="Smart Street Light real-time monitoring dashboard"/>
+<script>
+  if (localStorage.getItem('isLoggedIn') !== 'true') {
+    window.location.href = '/login.html';
+  }
+</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+
 <style>
-*{box-sizing:border-box}
-body{font-family:'Inter',sans-serif;background:#060612;min-height:100vh;overflow-x:hidden}
-.bg-mesh{position:fixed;inset:0;z-index:0;background:radial-gradient(ellipse 80% 60% at 20% 20%,#1a0533 0%,transparent 60%),radial-gradient(ellipse 60% 50% at 80% 80%,#001133 0%,transparent 60%),radial-gradient(ellipse 50% 40% at 50% 50%,#0d1a0d 0%,transparent 70%),#060612}
-.glass{background:rgba(255,255,255,0.045);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:1.25rem;transition:all .3s}
-.glass:hover{border-color:rgba(167,139,250,0.3);box-shadow:0 8px 40px rgba(139,92,246,0.12);transform:translateY(-2px)}
-.glass-flat{background:rgba(255,255,255,0.03);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.06);border-radius:1rem}
-.nav-bar{background:rgba(6,6,18,0.8);backdrop-filter:blur(24px);border-bottom:1px solid rgba(255,255,255,0.07)}
-.glow-violet{box-shadow:0 0 30px rgba(139,92,246,0.4),0 0 60px rgba(139,92,246,0.15)}
-.glow-green{box-shadow:0 0 30px rgba(74,222,128,0.5),0 0 60px rgba(74,222,128,0.2)}
-.glow-red{box-shadow:0 0 30px rgba(248,113,113,0.5),0 0 60px rgba(248,113,113,0.2)}
-.glow-amber{box-shadow:0 0 30px rgba(251,191,36,0.4),0 0 60px rgba(251,191,36,0.15)}
-.badge-on{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#4ade80}
-.badge-off{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#f87171}
-.badge-auto{background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.4);color:#a78bfa}
-.pulse{width:8px;height:8px;border-radius:50%;background:#4ade80;animation:pr 1.5s ease-out infinite}
-@keyframes pr{0%{box-shadow:0 0 0 0 rgba(74,222,128,.7)}70%{box-shadow:0 0 0 8px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
-.gt{background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-/* Toast */
-#toastZone{position:fixed;top:72px;right:16px;z-index:1000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
-.toast{background:rgba(15,15,30,0.95);backdrop-filter:blur(16px);border:1px solid rgba(139,92,246,0.4);border-radius:.875rem;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13px;color:#e2e8f0;transform:translateX(120%);transition:transform .4s cubic-bezier(.34,1.56,.64,1);box-shadow:0 4px 24px rgba(0,0,0,0.5);pointer-events:auto}
-.toast.show{transform:translateX(0)}
-/* Cmd buttons */
-.cmd-btn{flex:1;padding:10px 0;border-radius:.75rem;font-size:13px;font-weight:600;border:1px solid;transition:all .2s;cursor:pointer}
-.cmd-btn:hover{transform:translateY(-1px)}
-.cmd-btn:active{transform:scale(0.97)}
-.cmd-on{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.4);color:#4ade80}
-.cmd-on:hover{background:rgba(34,197,94,.22)}
-.cmd-off{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.35);color:#f87171}
-.cmd-off:hover{background:rgba(239,68,68,.2)}
-.cmd-auto{background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.4);color:#a78bfa}
-.cmd-auto:hover{background:rgba(139,92,246,.22)}
-/* Scrollbar */
-::-webkit-scrollbar{width:5px}
-::-webkit-scrollbar-thumb{background:rgba(139,92,246,.4);border-radius:3px}
-.tbl-row{transition:background .15s}
-.tbl-row:hover{background:rgba(139,92,246,.07)}
+  body { font-family: 'Inter', sans-serif; background: #04040f; color: white; margin: 0; }
+  .bg-mesh { position: fixed; inset: 0; z-index: -1; background: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #04040f 100%); }
+  .card { background: #11111d; border: 1px solid #222235; border-radius: 1rem; padding: 1.5rem; }
+  .btn-primary { background: #7c3aed; color: white; font-weight: bold; padding: 0.75rem 1.5rem; border-radius: 0.75rem; cursor: pointer; border: none; }
+  .btn-primary:hover { background: #6d28d9; }
+  .btn-danger { background: #dc2626; color: white; font-weight: bold; padding: 0.75rem 1.5rem; border-radius: 0.75rem; cursor: pointer; border: none; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-outline { background: transparent; border: 2px solid #33334d; color: white; font-weight: bold; padding: 0.75rem 1.5rem; border-radius: 0.75rem; cursor: pointer; }
+  .btn-outline:hover { background: rgba(255,255,255,0.05); }
+  input { background: #1a1a2e; border: 2px solid #33334d; border-radius: 0.75rem; padding: 0.75rem; color: white; width: 100%; outline: none; }
+  input:focus { border-color: #7c3aed; }
+  #toastZone { position: fixed; top: 20px; right: 20px; z-index: 100000; pointer-events: none; }
+  .toast { background: #11111d; border: 1px solid #7c3aed; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem; pointer-events: auto; }
 </style>
 </head>
-<body class="text-gray-100">
+<body>
 <div class="bg-mesh"></div>
 
-<!-- TOAST ZONE -->
-<div id="toastZone"></div>
-
 <!-- NAV -->
-<nav class="nav-bar sticky top-0 z-50 px-5 py-3 flex items-center justify-between">
-  <div class="flex items-center gap-3">
-    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center shadow-lg shadow-violet-500/30 text-white font-bold text-sm">S</div>
-    <div><p class="font-bold text-sm leading-none">SmartLight <span class="gt">IoT</span></p><p class="text-xs text-gray-600 font-mono">v2.0</p></div>
+<nav class="sticky top-0 z-50 bg-[#04040f]/90 backdrop-blur-md border-b border-[#222235] px-6 py-4 flex justify-between items-center">
+  <div class="flex items-center gap-2 font-bold text-lg">🚗 SmartLight <span class="text-violet-500">IoT</span></div>
+  <div class="flex gap-3">
+    <button onclick="editConfig()" class="bg-[#1a1a2e] p-2 rounded-lg border border-[#33334d]">⚙️</button>
+    <button onclick="showClearModal()" class="bg-red-900/20 p-2 rounded-lg border border-red-500/30">🗑️</button>
+    <button onclick="simulate()" class="bg-violet-600 px-4 py-2 rounded-lg font-bold text-sm">⚡ Simulate</button>
+    <div class="flex items-center gap-4 ml-2">
+      <span class="text-xs text-gray-400 hidden sm:block">User: <span id="displayUser" class="text-violet-400 font-bold">...</span></span>
+      <button onclick="logout()" class="bg-[#1a1a2e] px-4 py-2 rounded-lg border border-[#33334d] font-bold text-sm text-red-500">🚪 Logout</button>
+    </div>
   </div>
-  <div class="flex items-center gap-3">
-    <div class="flex items-center gap-1.5 text-xs text-gray-500"><div class="pulse"></div><span>Live</span></div>
-    <div class="glass-flat px-3 py-1.5 text-xs font-mono text-violet-300" id="navClock">--:--:--</div>
-    <button onclick="simulate()" id="simBtn" class="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 text-xs font-semibold hover:from-violet-500 hover:to-blue-500 transition-all shadow-lg shadow-violet-500/20 active:scale-95">⚡ Simulate</button>
-  </div>
+
+
 </nav>
 
-<!-- MAIN -->
-<main class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-7 space-y-5">
-
-  <!-- Header -->
-  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-    <div>
-      <h1 class="text-2xl font-extrabold gt">Smart Street Light Dashboard</h1>
-      <p class="text-gray-500 text-sm">Real-time vehicle detection &amp; automated light management</p>
-    </div>
-    <div class="glass-flat px-4 py-2 flex items-center gap-2 text-sm self-start">
-      <span class="text-violet-400">📍</span><span class="text-gray-300">Main Road — Sector 7</span>
-    </div>
-  </div>
-
-  <!-- KPI CARDS -->
+<main class="max-w-6xl mx-auto p-6 space-y-6">
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <div class="glass p-5">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-medium">Total</p>
-        <div class="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center text-violet-400">🚗</div>
+    <div class="card"><p class="text-gray-400 text-xs">TOTAL</p><p class="text-3xl font-bold" id="kpiTotal">0</p></div>
+    <div class="card"><p class="text-gray-400 text-xs">TODAY</p><p class="text-3xl font-bold" id="kpiToday">0</p></div>
+    <div class="card"><p class="text-gray-400 text-xs">LAST HOUR</p><p class="text-3xl font-bold" id="kpiHour">0</p></div>
+    <div class="card"><p class="text-gray-400 text-xs">PEAK</p><p class="text-3xl font-bold" id="kpiPeak">00:00</p></div>
+  </div>
+
+  <div class="grid lg:grid-cols-3 gap-6">
+    <div class="card flex flex-col items-center gap-6">
+      <div id="lightStatus" class="text-6xl">💡</div>
+      <div id="lightBadge" class="bg-red-900/20 text-red-500 px-4 py-1 rounded-full font-bold">LIGHT OFF</div>
+      <div class="flex gap-2 w-full">
+        <button onclick="sendCmd('light_on')" class="flex-1 bg-green-600/20 text-green-500 border border-green-500/30 py-2 rounded-lg font-bold">ON</button>
+        <button onclick="sendCmd('light_off')" class="flex-1 bg-red-600/20 text-red-500 border border-red-500/30 py-2 rounded-lg font-bold">OFF</button>
+        <button onclick="sendCmd('light_auto')" class="flex-1 bg-violet-600/20 text-violet-500 border border-violet-500/30 py-2 rounded-lg font-bold">AUTO</button>
       </div>
-      <p class="text-3xl font-extrabold" id="kpiTotal">—</p>
-      <p class="text-xs text-gray-600 mt-1">All-time detections</p>
     </div>
-    <div class="glass p-5">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-medium">Today</p>
-        <div class="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center text-blue-400">📅</div>
-      </div>
-      <p class="text-3xl font-extrabold" id="kpiToday">—</p>
-      <p class="text-xs text-gray-600 mt-1">Vehicles today</p>
-    </div>
-    <div class="glass p-5">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-medium">Last Hour</p>
-        <div class="w-8 h-8 rounded-lg bg-cyan-500/15 flex items-center justify-center text-cyan-400">⏱</div>
-      </div>
-      <p class="text-3xl font-extrabold" id="kpiHour">—</p>
-      <p class="text-xs text-gray-600 mt-1">Past 60 minutes</p>
-    </div>
-    <div class="glass p-5">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-xs text-gray-500 uppercase tracking-widest font-medium">Peak Hour</p>
-        <div class="w-8 h-8 rounded-lg bg-amber-500/15 flex items-center justify-center text-amber-400">📈</div>
-      </div>
-      <p class="text-3xl font-extrabold font-mono" id="kpiPeak">—</p>
-      <p class="text-xs text-gray-600 mt-1">Busiest today</p>
+    <div class="card lg:col-span-2 h-64">
+      <canvas id="hourlyChart"></canvas>
     </div>
   </div>
 
-  <!-- LIGHT STATUS + CONTROLS + DONUT -->
-  <div class="grid lg:grid-cols-3 gap-4">
-
-    <!-- Light status & manual control -->
-    <div class="glass p-6 flex flex-col items-center gap-4 text-center">
-      <p class="text-xs text-gray-500 uppercase tracking-widest self-start font-medium">Street Light</p>
-      <div id="lightIcon" class="w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 bg-gray-800/60 text-5xl">💡</div>
-      <div id="lightBadge" class="px-4 py-1.5 rounded-full text-sm font-bold badge-off">— —</div>
-      <div id="modeIndicator" class="text-xs text-gray-600 font-mono">mode: auto</div>
-
-      <!-- Manual controls -->
-      <div class="w-full">
-        <p class="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wider">Manual Override</p>
-        <div class="flex gap-2">
-          <button class="cmd-btn cmd-on"  onclick="sendCmd('light_on')" >ON</button>
-          <button class="cmd-btn cmd-off" onclick="sendCmd('light_off')">OFF</button>
-          <button class="cmd-btn cmd-auto"onclick="sendCmd('light_auto')">AUTO</button>
-        </div>
-      </div>
-
-      <div class="w-full space-y-1 text-xs text-left">
-        <div class="flex justify-between"><span class="text-gray-600">Day starts</span><span class="font-mono text-gray-400">06:00</span></div>
-        <div class="flex justify-between"><span class="text-gray-600">Night starts</span><span class="font-mono text-gray-400">18:00</span></div>
-        <div class="flex justify-between"><span class="text-gray-600">Server time</span><span class="font-mono text-violet-400" id="serverTime">—</span></div>
-      </div>
-    </div>
-
-    <!-- Hourly chart -->
-    <div class="glass p-5">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-sm font-semibold">24-Hour Traffic Flow</p>
-        <span class="text-xs font-mono text-gray-600">vehicles/hr</span>
-      </div>
-      <div class="relative h-52"><canvas id="hourlyChart"></canvas></div>
-    </div>
-
-    <!-- Vehicle type donut -->
-    <div class="glass p-5">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-sm font-semibold">Vehicle Types</p>
-        <span class="text-xs text-gray-600">Today</span>
-      </div>
-      <div class="relative h-40"><canvas id="donutChart"></canvas></div>
-      <div id="donutLegend" class="mt-3 flex flex-wrap gap-2 justify-center text-xs"></div>
-    </div>
+  <div class="card">
+    <h3 class="font-bold mb-4">Recent Events</h3>
+    <div id="eventsList" class="space-y-2"></div>
   </div>
-
-  <!-- WEEKLY + EVENTS -->
-  <div class="grid lg:grid-cols-5 gap-4">
-    <!-- Weekly bar -->
-    <div class="glass p-5 lg:col-span-3">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-sm font-semibold">7-Day Overview</p>
-        <span class="text-xs text-gray-600">Daily totals</span>
-      </div>
-      <div class="relative h-44"><canvas id="weeklyChart"></canvas></div>
-    </div>
-
-    <!-- Recent events -->
-    <div class="glass p-5 lg:col-span-2">
-      <div class="flex items-center justify-between mb-3">
-        <p class="text-sm font-semibold">Recent Events</p>
-        <div class="flex items-center gap-1 text-xs text-gray-600"><div class="pulse w-2 h-2"></div>3s</div>
-      </div>
-      <div class="space-y-2 overflow-y-auto max-h-52" id="eventsList">
-        <p class="text-xs text-gray-600 text-center py-4">Waiting for data…</p>
-      </div>
-    </div>
-  </div>
-
-  <p class="text-center text-xs text-gray-700 pb-2">Smart Street Light IoT System © 2024 — ESP32 · Flask · SQLite</p>
 </main>
 
+<!-- MODALS (Absolute Solid UI) -->
+<div id="configModal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.9); align-items:center; justify-content:center;">
+  <div style="background:#11111d; border:2px solid #7c3aed; border-radius:1rem; padding:2rem; width:100%; max-width:400px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+      <h2 style="font-size:1.5rem; font-weight:bold;">Settings</h2>
+      <button onclick="closeModal()" style="background:transparent; border:none; color:white; font-size:1.5rem; cursor:pointer;">✕</button>
+    </div>
+    <label style="display:block; font-size:0.75rem; color:#a78bfa; margin-bottom:0.5rem; font-weight:bold;">ESP32 IP ADDRESS</label>
+    <input type="text" id="espIpInput" placeholder="e.g. 192.168.1.50">
+    <div style="display:flex; gap:1rem; margin-top:1.5rem;">
+      <button onclick="closeModal()" class="btn-outline" style="flex:1;">CANCEL</button>
+      <button onclick="saveConfig()" id="saveConfigBtn" class="btn-primary" style="flex:1;">SAVE CHANGES</button>
+    </div>
+  </div>
+</div>
+
+<div id="clearModal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.9); align-items:center; justify-content:center;">
+  <div style="background:#11111d; border:2px solid #dc2626; border-radius:1rem; padding:2rem; width:100%; max-width:400px;">
+    <h2 style="font-size:1.5rem; font-weight:bold; margin-bottom:1rem;">Clear Data?</h2>
+    <p style="color:#9ca3af; margin-bottom:1.5rem;">This will delete all records permanently.</p>
+    <div style="display:flex; gap:1rem;">
+      <button onclick="closeClearModal()" class="btn-outline" style="flex:1;">CANCEL</button>
+      <button onclick="confirmClear()" id="confirmClearBtn" class="btn-danger" style="flex:1;">YES, CLEAR</button>
+    </div>
+  </div>
+</div>
+
+<div id="toastZone"></div>
+
 <script>
-// ── Chart defaults
-Chart.defaults.color='rgba(255,255,255,0.4)';
-Chart.defaults.font.family="'JetBrains Mono',monospace";
-Chart.defaults.font.size=11;
-const grid='rgba(255,255,255,0.05)';
+const AUTH_HEADERS = { 
+  'Content-Type': 'application/json', 
+  'X-API-Key': 'university-project-2024',
+  'X-User': localStorage.getItem('currentUser') || 'admin'
+};
+document.getElementById('displayUser').textContent = AUTH_HEADERS['X-User'];
 
-// ── Hourly line chart
-const hCtx=document.getElementById('hourlyChart');
-const hourlyChart=new Chart(hCtx,{type:'line',data:{labels:[],datasets:[{label:'Vehicles',data:[],borderColor:'#8b5cf6',backgroundColor:(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,'rgba(139,92,246,0.45)');g.addColorStop(1,'rgba(139,92,246,0)');return g;},borderWidth:2,pointRadius:3,pointBackgroundColor:'#8b5cf6',tension:0.4,fill:true}]},options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(10,10,20,0.95)',borderColor:'rgba(139,92,246,0.4)',borderWidth:1,padding:10}},scales:{x:{grid:{color:grid},ticks:{maxTicksLimit:8}},y:{grid:{color:grid},beginAtZero:true,ticks:{stepSize:1}}}}});
-
-// ── Weekly bar chart
-const weeklyChart=new Chart(document.getElementById('weeklyChart'),{type:'bar',data:{labels:[],datasets:[{label:'Vehicles',data:[],backgroundColor:'rgba(96,165,250,0.2)',borderColor:'#60a5fa',borderWidth:1.5,borderRadius:6,hoverBackgroundColor:'rgba(96,165,250,0.4)'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(10,10,20,0.95)',borderColor:'rgba(96,165,250,0.4)',borderWidth:1,padding:10}},scales:{x:{grid:{display:false}},y:{grid:{color:grid},beginAtZero:true,ticks:{stepSize:1}}}}});
-
-// ── Donut chart
-const DONUT_COLORS=['#a78bfa','#60a5fa','#34d399','#fb923c','#f472b6'];
-const donutChart=new Chart(document.getElementById('donutChart'),{type:'doughnut',data:{labels:[],datasets:[{data:[],backgroundColor:DONUT_COLORS,borderColor:'rgba(0,0,0,0)',borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(10,10,20,0.95)',borderColor:'rgba(167,139,250,0.3)',borderWidth:1,padding:10}},cutout:'65%'}});
-
-// ── Toast notifications
-let lastTotal=0;
-function showToast(msg,icon='🚗'){
-  const z=document.getElementById('toastZone');
-  const t=document.createElement('div');
-  t.className='toast';
-  t.innerHTML=`<span class="text-lg">${icon}</span><div><p class="font-semibold text-xs">${msg}</p><p class="text-gray-500 text-xs">${new Date().toLocaleTimeString()}</p></div>`;
+function showToast(msg) {
+  const z = document.getElementById('toastZone');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
   z.appendChild(t);
-  requestAnimationFrame(()=>requestAnimationFrame(()=>t.classList.add('show')));
-  setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),500);},4000);
+  setTimeout(() => t.remove(), 3000);
 }
 
-// ── Light UI
-let currentMode='auto';
-function updateLightUI(status,isNight){
-  const icon=document.getElementById('lightIcon');
-  const badge=document.getElementById('lightBadge');
-  const mode=document.getElementById('modeIndicator');
-  if(status==='ON'){
-    icon.className='w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 bg-green-500/10 glow-green text-5xl';
-    badge.className='px-4 py-1.5 rounded-full text-sm font-bold badge-on';
-    badge.textContent='🟢  LIGHT ON';
-  }else{
-    icon.className='w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 bg-red-500/10 glow-red text-5xl';
-    badge.className='px-4 py-1.5 rounded-full text-sm font-bold badge-off';
-    badge.textContent='🔴  LIGHT OFF';
-  }
-  mode.textContent=`mode: ${currentMode} | ${isNight?'night':'day'}`;
+// Modals
+function editConfig() {
+  document.getElementById('configModal').style.display = 'flex';
+  fetch('/api/config', { headers: AUTH_HEADERS })
+    .then(r=>r.json()).then(d => { document.getElementById('espIpInput').value = d.esp32_ip || ''; });
+}
+function closeModal() { document.getElementById('configModal').style.display = 'none'; }
+function showClearModal() { document.getElementById('clearModal').style.display = 'flex'; }
+function closeClearModal() { document.getElementById('clearModal').style.display = 'none'; }
+
+// API Actions
+async function saveConfig() {
+  const ip = document.getElementById('espIpInput').value.trim();
+  const btn = document.getElementById('saveConfigBtn');
+  btn.disabled = true; btn.textContent = "Saving...";
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ esp32_ip: ip })
+    });
+    if(r.ok) { showToast("Settings Saved"); closeModal(); }
+    else { alert("Error: " + r.status); }
+  } catch(e) { alert("Network Error"); }
+  finally { btn.disabled = false; btn.textContent = "SAVE CHANGES"; }
 }
 
-// ── Donut legend
-function updateDonutLegend(labels){
-  const el=document.getElementById('donutLegend');
-  el.innerHTML=labels.map((l,i)=>`<span class="flex items-center gap-1"><span style="width:8px;height:8px;border-radius:50%;background:${DONUT_COLORS[i%DONUT_COLORS.length]};display:inline-block"></span>${l}</span>`).join('');
+async function confirmClear() {
+  const btn = document.getElementById('confirmClearBtn');
+  btn.disabled = true; btn.textContent = "Clearing...";
+  try {
+    const r = await fetch('/api/clear', { method: 'POST', headers: AUTH_HEADERS });
+    if(r.ok) { showToast("Data Cleared"); closeClearModal(); fetchStatus(); }
+    else { alert("Clear Failed"); }
+  } catch(e) { alert("Network Error"); }
+  finally { btn.disabled = false; btn.textContent = "YES, CLEAR"; }
 }
 
-// ── Events list
-function renderEvents(events){
-  const el=document.getElementById('eventsList');
-  if(!events||!events.length){el.innerHTML='<p class="text-xs text-gray-600 text-center py-4">No events yet.</p>';return;}
-  el.innerHTML=events.map(e=>`
-    <div class="flex items-center gap-2 glass-flat px-3 py-2 tbl-row rounded-lg">
-      <span class="text-base">🚗</span>
-      <div class="flex-1 min-w-0">
-        <p class="text-xs font-medium text-gray-300 truncate">${e.location||'Main Road'}</p>
-        <p class="text-xs text-gray-600 font-mono">${e.detected_at?new Date(e.detected_at).toLocaleTimeString():''}</p>
-      </div>
-      <span class="text-xs text-violet-400 font-mono shrink-0">#${e.id}</span>
-    </div>`).join('');
+// Stats
+let hourlyChart;
+function initChart() {
+  const ctx = document.getElementById('hourlyChart').getContext('2d');
+  hourlyChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{ label: 'Vehicles', data: [], borderColor: '#7c3aed', tension: 0.3 }] },
+    options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+  });
 }
 
-// ── Animate number
-function animNum(id,val){
-  const el=document.getElementById(id);
-  if(!el)return;
-  const from=parseInt(el.textContent)||0;
-  if(from===val){el.textContent=val;return;}
-  const diff=Math.abs(val-from),dir=val>from?1:-1;
-  const dur=Math.min(diff*25,500),steps=Math.max(diff,1),interval=dur/steps;
-  let c=0;const t=setInterval(()=>{c++;el.textContent=from+dir*c;if(c>=diff)clearInterval(t);},interval);
-}
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status', { headers: AUTH_HEADERS });
+    const d = await r.json();
 
-// ── Fetch status (every 3s)
-async function fetchStatus(){
-  try{
-    const r=await fetch('/api/status');
-    if(!r.ok)return;
-    const d=await r.json();
+    document.getElementById('kpiTotal').textContent = d.total_count;
+    document.getElementById('kpiToday').textContent = d.today_count;
+    document.getElementById('kpiHour').textContent = d.last_hour_count;
+    document.getElementById('kpiPeak').textContent = d.peak_hour;
+    
+    const badge = document.getElementById('lightBadge');
+    if(d.light_status === 'ON') {
+      badge.className = "bg-green-900/20 text-green-500 px-4 py-1 rounded-full font-bold";
+      badge.textContent = "LIGHT ON";
+    } else {
+      badge.className = "bg-red-900/20 text-red-500 px-4 py-1 rounded-full font-bold";
+      badge.textContent = "LIGHT OFF";
+    }
 
-    animNum('kpiTotal',d.total_count);
-    animNum('kpiToday',d.today_count);
-    animNum('kpiHour',d.last_hour_count);
-    document.getElementById('kpiPeak').textContent=d.peak_hour;
-    document.getElementById('serverTime').textContent=d.server_time;
-    document.getElementById('navClock').textContent=d.server_time?.slice(-8)||'';
-
-    updateLightUI(d.light_status,d.is_night);
-
-    // Hourly chart
-    hourlyChart.data.labels=d.hourly_data.map(x=>x.hour);
-    hourlyChart.data.datasets[0].data=d.hourly_data.map(x=>x.count);
+    hourlyChart.data.labels = d.hourly_data.map(x=>x.hour);
+    hourlyChart.data.datasets[0].data = d.hourly_data.map(x=>x.count);
     hourlyChart.update('none');
 
-    // Toast on new detection
-    if(lastTotal>0&&d.total_count>lastTotal){
-      const n=d.total_count-lastTotal;
-      showToast(`${n} vehicle${n>1?'s':''} detected!`,'🚗');
-    }
-    lastTotal=d.total_count;
-
-    renderEvents(d.recent_events);
-
-    // Build donut from recent events vehicle types
-    const types={};
-    (d.recent_events||[]).forEach(e=>{const t=e.vehicle_type||'Unknown';types[t]=(types[t]||0)+1;});
-    const labels=Object.keys(types);
-    const vals=Object.values(types);
-    donutChart.data.labels=labels;
-    donutChart.data.datasets[0].data=vals;
-    donutChart.data.datasets[0].backgroundColor=DONUT_COLORS.slice(0,labels.length);
-    donutChart.update('none');
-    updateDonutLegend(labels);
-  }catch(e){console.error(e);}
+    const ev = document.getElementById('eventsList');
+    ev.innerHTML = d.recent_events.map(e => `<div class="p-2 border-b border-[#222235] text-sm">${e.detected_at} - Vehicle Detected</div>`).join('');
+  } catch(e) {}
 }
 
-// ── Fetch weekly (every 30s)
-async function fetchWeekly(){
-  try{
-    const r=await fetch('/api/stats/weekly');
-    if(!r.ok)return;
-    const d=await r.json();
-    weeklyChart.data.labels=d.weekly.map(x=>x.day);
-    weeklyChart.data.datasets[0].data=d.weekly.map(x=>x.count);
-    weeklyChart.update('none');
-  }catch(e){}
+async function sendCmd(cmd) {
+  fetch('/api/command', { method: 'POST', headers: AUTH_HEADERS, body: JSON.stringify({ command: cmd }) })
+    .then(() => fetchStatus());
 }
 
-// ── Simulate detection
-async function simulate(){
-  const b=document.getElementById('simBtn');
-  b.disabled=true;b.textContent='Sending…';
-  try{await fetch('/api/simulate',{method:'POST'});await fetchStatus();}
-  finally{b.disabled=false;b.textContent='⚡ Simulate';}
+async function simulate() {
+  fetch('/api/simulate', { 
+    method: 'POST', 
+    headers: AUTH_HEADERS,
+    body: JSON.stringify({ user: AUTH_HEADERS['X-User'] })
+  }).then(() => fetchStatus());
 }
 
-// ── Send command to ESP32 via Flask
-async function sendCmd(cmd){
-  currentMode=cmd.replace('light_','');
-  showToast(`Command sent: ${cmd.replace('_',' ').toUpperCase()}`,'💡');
-  try{
-    await fetch('/api/command',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','X-API-Key':'esp32-secret-key-2024'},
-      body:JSON.stringify({command:cmd})
-    });
-    await fetchStatus();
-  }catch(e){showToast('ESP32 not reachable','⚠️');}
-}
 
-// ── Boot
-fetchStatus();fetchWeekly();
-setInterval(fetchStatus,3000);
-setInterval(fetchWeekly,30000);
+initChart();
+fetchStatus();
+setInterval(fetchStatus, 3000);
+  function logout() {
+    localStorage.removeItem('isLoggedIn');
+    localStorage.removeItem('currentUser');
+    window.location.href = '/login.html';
+  }
 </script>
 </body>
 </html>

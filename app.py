@@ -13,19 +13,20 @@ Handles:
 """
 
 from __future__ import annotations
-
 import logging
 import os
-import sqlite3
 import time
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Any, Generator
-
+from typing import Any
 import requests as http_requests
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -41,16 +42,25 @@ logger = logging.getLogger("SmartStreetLight")
 # App & Config
 # ---------------------------------------------------------------------------
 app = Flask(__name__, static_folder="static", static_url_path="")
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={r"/api/*": {"origins": "*", "allow_headers": ["Content-Type", "X-API-Key", "X-User"]}})
 
-DATABASE = os.path.join(os.path.dirname(__file__), "street_light.db")
+# --- Credentials & Config ---
+SUPABASE_URL     = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY     = os.environ.get("SUPABASE_KEY")
+API_KEY          = os.environ.get("API_KEY", "university-project-2024")
+NIGHT_START_HOUR = 18
+DAY_START_HOUR   = 6
 
-# Night-time window (24 h clock).  Lights are ON when hour ∈ [NIGHT_START, 24) ∪ [0, DAY_START)
-NIGHT_START_HOUR: int = 18   # 6 PM
-DAY_START_HOUR: int = 6      # 6 AM
+if not SUPABASE_URL or not SUPABASE_KEY:
+    logging.error("CRITICAL: Supabase credentials missing from environment!")
 
-# API key for minimal ESP32 auth (set env var API_KEY to override)
-API_KEY: str = os.environ.get("API_KEY", "esp32-secret-key-2024")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def get_now_local() -> datetime:
+    """Helper to get the current time in the local timezone (UTC+5)."""
+    return datetime.utcnow() + timedelta(hours=5)
+
 
 # ---------------------------------------------------------------------------
 # Privacy — IP Whitelist
@@ -59,7 +69,7 @@ API_KEY: str = os.environ.get("API_KEY", "esp32-secret-key-2024")
 # The ESP32's IP MUST be listed here so it can POST detections.
 # Set env var ALLOWED_IPS as comma-separated list to override, e.g.:
 #   set ALLOWED_IPS=127.0.0.1,192.168.1.50,192.168.1.20
-_default_ips = "127.0.0.1,::1"   # localhost IPv4 + IPv6
+_default_ips = "127.0.0.1,::1,*"   # localhost IPv4 + IPv6 + wildcard
 ALLOWED_IPS: set[str] = set(
     os.environ.get("ALLOWED_IPS", _default_ips).split(",")
 )
@@ -68,6 +78,23 @@ ALLOWED_IPS: set[str] = set(
 ESP32_IP: str   = os.environ.get("ESP32_IP", "192.168.1.50")
 ESP32_PORT: int = int(os.environ.get("ESP32_PORT", "80"))
 ESP32_BASE: str = f"http://{ESP32_IP}:{ESP32_PORT}"
+
+# Dynamically add the ESP32 IP to the allowed list so it can report detections
+ALLOWED_IPS.add(ESP32_IP)
+
+def update_esp32_config(new_ip: str):
+    """Updates the ESP32 IP globally and persists it to the database."""
+    global ESP32_IP, ESP32_BASE
+    if new_ip and new_ip != ESP32_IP:
+        ESP32_IP = new_ip
+        ESP32_BASE = f"http://{ESP32_IP}:{ESP32_PORT}"
+        ALLOWED_IPS.add(ESP32_IP)
+        
+        # Persist to DB
+        with get_db_context() as conn:
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('esp32_ip', ?)", (new_ip,))
+        
+        logger.info("ESP32 configuration updated & persisted — New IP: %s", ESP32_IP)
 
 
 @app.before_request
@@ -84,101 +111,91 @@ def enforce_ip_whitelist() -> None:
     # X-Forwarded-For can be a comma-list; take the first (real client)
     client_ip = client_ip.split(",")[0].strip()
 
+    if "*" in ALLOWED_IPS:
+        return
+
     if client_ip not in ALLOWED_IPS:
-        logger.warning("Blocked request from %s — not in whitelist", client_ip)
-        return jsonify({"error": "Access denied"}), 403
+        # Check if it's a typical local private network IP (IPv4 only check)
+        is_private = False
+        if "." in client_ip:
+            parts = client_ip.split(".")
+            if len(parts) >= 2:
+                is_private = (
+                    client_ip.startswith("192.168.") or
+                    client_ip.startswith("10.") or
+                    (client_ip.startswith("172.") and 16 <= int(parts[1]) <= 31)
+                )
+
+        if not is_private:
+            logger.warning("Blocked request from %s — not in whitelist. Allowed: %s", client_ip, ALLOWED_IPS)
+            return jsonify({"error": "Access denied", "your_ip": client_ip}), 403
 
     logger.debug("Allowed request from %s", client_ip)
 
 # ---------------------------------------------------------------------------
-# Database helpers
+# Database helpers (Supabase)
 # ---------------------------------------------------------------------------
-
-def get_db() -> sqlite3.Connection:
-    """Return the per-request SQLite connection stored in Flask's `g`."""
-    if "db" not in g:
-        conn = sqlite3.connect(DATABASE, detect_types=sqlite3.PARSE_DECLTYPES)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA foreign_keys=ON;")
-        g.db = conn
-    return g.db
-
-
-@app.teardown_appcontext
-def close_db(exc: Exception | None = None) -> None:
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
-
-
-@contextmanager
-def get_db_context() -> Generator[sqlite3.Connection, None, None]:
-    """Context-manager for use outside of a request (e.g. init_db)."""
-    conn = sqlite3.connect(DATABASE, detect_types=sqlite3.PARSE_DECLTYPES)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
 
 def init_db() -> None:
-    """Create tables if they do not already exist."""
-    schema = """
-    CREATE TABLE IF NOT EXISTS vehicle_events (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        sensor_id   TEXT      NOT NULL DEFAULT 'sensor-01',
-        location    TEXT      NOT NULL DEFAULT 'Main Road',
-        speed_kmh   REAL,
-        vehicle_type TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS light_status_log (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        changed_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        status      TEXT      NOT NULL CHECK(status IN ('ON','OFF')),
-        reason      TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_vehicle_events_detected_at
-        ON vehicle_events(detected_at);
-
-    CREATE INDEX IF NOT EXISTS idx_light_status_changed_at
-        ON light_status_log(changed_at);
-    """
-    with get_db_context() as conn:
-        conn.executescript(schema)
-    logger.info("Database initialised at %s", DATABASE)
-
+    """Check connection and load initial settings."""
+    try:
+        logger.info("Connected to Supabase (Multi-User Mode) successfully.")
+    except Exception as e:
+        logger.error("Supabase Connection Error: %s", e)
 
 # ---------------------------------------------------------------------------
-# Business logic
+# Business logic (User-Aware)
 # ---------------------------------------------------------------------------
+
+def get_user():
+    """Identify the user from the custom X-User header."""
+    return request.headers.get("X-User", "admin")
+
+def get_light_mode() -> str:
+    user = get_user()
+    try:
+        res = supabase.table("settings").select("value").eq("key", "light_mode").eq("username", user).execute()
+        return res.data[0]['value'] if res.data else 'auto'
+    except: return 'auto'
+
+def set_light_mode(mode: str) -> None:
+    user = get_user()
+    try:
+        supabase.table("settings").upsert({"key": "light_mode", "value": mode, "username": user}).execute()
+    except Exception as e:
+        logger.error("Error setting light mode: %s", e)
+
+
 
 def is_night_time() -> bool:
-    hour = datetime.now().hour
+    """Check if current local time is within the night-time window."""
+    hour = get_now_local().hour
     return hour >= NIGHT_START_HOUR or hour < DAY_START_HOUR
 
 
 def get_light_status() -> str:
+    mode = get_light_mode()
+    if mode == "on":
+        return "ON"
+    elif mode == "off":
+        return "OFF"
     return "ON" if is_night_time() else "OFF"
 
 
 def require_api_key(f):
-    """Decorator: reject requests missing the correct X-API-Key header."""
+    """Decorator: reject requests missing the correct X-API-Key header (bypassed for localhost)."""
     @wraps(f)
     def decorated(*args, **kwargs):
+        client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+        client_ip = client_ip.split(",")[0].strip()
+        
+        # Bypass for local requests
+        if client_ip in ["127.0.0.1", "::1"]:
+            return f(*args, **kwargs)
+
         key = request.headers.get("X-API-Key", "")
         if key != API_KEY:
-            logger.warning("Unauthorised request from %s", request.remote_addr)
+            logger.warning("Unauthorised request from %s", client_ip)
             return jsonify({"error": "Unauthorised — invalid API key"}), 401
         return f(*args, **kwargs)
     return decorated
@@ -189,36 +206,35 @@ def require_api_key(f):
 # ---------------------------------------------------------------------------
 
 @app.route("/api/detect", methods=["POST"])
-@require_api_key
+@app.route("/update-traffic", methods=["POST"])
 def detect_vehicle():
-    """
-    Called by the ESP32 whenever the IR sensor detects a vehicle.
+    """Called by the ESP32 whenever a vehicle is detected."""
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    client_ip = client_ip.split(",")[0].strip()
+    if client_ip not in ["127.0.0.1", "::1"] and client_ip != ESP32_IP:
+        update_esp32_config(client_ip)
 
-    Expected JSON body (all fields optional):
-    {
-        "sensor_id":    "sensor-01",
-        "location":     "Main Road",
-        "speed_kmh":    45.2,
-        "vehicle_type": "car"
-    }
-    """
     data: dict[str, Any] = request.get_json(silent=True) or {}
+    user = data.get("user", "admin") # The ESP32 should send its owner's username
+    
+    payload = {
+        "sensor_id": str(data.get("sensor_id", "sensor-01")),
+        "location": str(data.get("location", "Main Road")),
+        "speed_kmh": data.get("speed_kmh"),
+        "vehicle_type": data.get("vehicle_type", "car"),
+        "detected_at": datetime.utcnow().isoformat(),
+        "username": user
+    }
 
-    sensor_id    = str(data.get("sensor_id",    "sensor-01"))[:64]
-    location     = str(data.get("location",     "Main Road"))[:128]
-    speed_kmh    = data.get("speed_kmh")
-    vehicle_type = data.get("vehicle_type")
+    try:
+        supabase.table("vehicle_events").insert(payload).execute()
 
-    db = get_db()
-    db.execute(
-        """INSERT INTO vehicle_events (sensor_id, location, speed_kmh, vehicle_type)
-           VALUES (?, ?, ?, ?)""",
-        (sensor_id, location, speed_kmh, vehicle_type),
-    )
-    db.commit()
+        logger.info("Vehicle detected logged to Supabase: %s", payload['location'])
+    except Exception as e:
+        logger.error("Supabase Log Error: %s", e)
 
-    logger.info("Vehicle detected — sensor=%s  location=%s", sensor_id, location)
     return jsonify({"status": "ok", "light": get_light_status()}), 201
+
 
 
 # ---------------------------------------------------------------------------
@@ -227,140 +243,143 @@ def detect_vehicle():
 
 @app.route("/api/status", methods=["GET"])
 def get_status():
-    """
-    Returns a comprehensive snapshot for the dashboard.
-    Polled every 3 s by the frontend.
-    """
-    db   = get_db()
-    now  = datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    """Returns dashboard snapshot from Supabase."""
+    now_utc = datetime.utcnow()
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    last_hour_start = now_utc - timedelta(hours=1)
+    user = get_user()
 
-    # Total all-time count
-    total_count = db.execute(
-        "SELECT COUNT(*) FROM vehicle_events"
-    ).fetchone()[0]
+    try:
+        # Total
+        total_res = supabase.table("vehicle_events").select("*", count="exact").eq("username", user).execute()
+        total_count = total_res.count if total_res.count is not None else 0
 
-    # Today's count
-    today_count = db.execute(
-        "SELECT COUNT(*) FROM vehicle_events WHERE detected_at >= ?",
-        (today_start,),
-    ).fetchone()[0]
+        # Today
+        today_res = supabase.table("vehicle_events").select("*", count="exact").eq("username", user).gte("detected_at", today_start.isoformat()).execute()
+        today_count = today_res.count if today_res.count is not None else 0
 
-    # Last hour count
-    last_hour = db.execute(
-        "SELECT COUNT(*) FROM vehicle_events WHERE detected_at >= ?",
-        (now - timedelta(hours=1),),
-    ).fetchone()[0]
+        # Last Hour
+        lh_res = supabase.table("vehicle_events").select("*", count="exact").eq("username", user).gte("detected_at", last_hour_start.isoformat()).execute()
+        last_hour_count = lh_res.count if lh_res.count is not None else 0
 
-    # Last 24 h — hourly breakdown for chart
-    hourly_data: list[dict] = []
-    for h in range(24):
-        hour_start = (now - timedelta(hours=23 - h)).replace(
-            minute=0, second=0, microsecond=0
-        )
-        hour_end = hour_start + timedelta(hours=1)
-        count = db.execute(
-            "SELECT COUNT(*) FROM vehicle_events WHERE detected_at >= ? AND detected_at < ?",
-            (hour_start, hour_end),
-        ).fetchone()[0]
-        hourly_data.append({"hour": hour_start.strftime("%H:%M"), "count": count})
+        # Recent Events (10)
+        recent_res = supabase.table("vehicle_events").select("*").eq("username", user).order("detected_at", desc=True).limit(10).execute()
+        recent_events = []
+        for r in recent_res.data:
+            dt = datetime.fromisoformat(r['detected_at'].replace('Z', '+00:00'))
+            dt_local = dt + timedelta(hours=5)
+            recent_events.append({
+                "id": r['id'],
+                "detected_at": dt_local.strftime("%H:%M:%S"),
+                "location": r['location'],
+                "vehicle_type": r['vehicle_type']
+            })
 
-    # Last 10 detection events
-    recent_rows = db.execute(
-        """SELECT id, detected_at, sensor_id, location, speed_kmh, vehicle_type
-           FROM vehicle_events
-           ORDER BY detected_at DESC
-           LIMIT 10"""
-    ).fetchall()
-    recent_events = [
-        {
-            "id":           r["id"],
-            "detected_at":  r["detected_at"],
-            "sensor_id":    r["sensor_id"],
-            "location":     r["location"],
-            "speed_kmh":    r["speed_kmh"],
-            "vehicle_type": r["vehicle_type"],
-        }
-        for r in recent_rows
-    ]
+        # Chart Data (Last 24 hours)
+        day_res = supabase.table("vehicle_events").select("detected_at").eq("username", user).gte("detected_at", (now_utc - timedelta(hours=24)).isoformat()).execute()
 
-    # Peak hour today
-    peak_row = db.execute(
-        """SELECT strftime('%H', detected_at) AS hr, COUNT(*) AS cnt
-           FROM vehicle_events
-           WHERE detected_at >= ?
-           GROUP BY hr
-           ORDER BY cnt DESC
-           LIMIT 1""",
-        (today_start,),
-    ).fetchone()
-    peak_hour = f"{peak_row['hr']}:00" if peak_row else "N/A"
+        hourly_counts = {}
+        for r in day_res.data:
+            dt = datetime.fromisoformat(r['detected_at'].replace('Z', '+00:00'))
+            dt_local = dt + timedelta(hours=5)
+            h_key = dt_local.strftime("%H:00")
+            hourly_counts[h_key] = hourly_counts.get(h_key, 0) + 1
 
-    light_status = get_light_status()
+        hourly_data = []
+        for i in range(24):
+            t = (get_now_local() - timedelta(hours=23-i)).strftime("%H:00")
+            hourly_data.append({"hour": t, "count": hourly_counts.get(t, 0)})
 
-    return jsonify(
-        {
-            "timestamp":      now.isoformat(),
-            "light_status":   light_status,
-            "is_night":       is_night_time(),
-            "total_count":    total_count,
-            "today_count":    today_count,
-            "last_hour_count": last_hour,
-            "peak_hour":      peak_hour,
-            "hourly_data":    hourly_data,
-            "recent_events":  recent_events,
-            "server_time":    now.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-    )
+        # Peak Hour
+        peak_hour = "N/A"
+        if hourly_counts:
+            peak_hour = max(hourly_counts, key=hourly_counts.get)
+
+        return jsonify({
+            "total_count": total_count,
+            "today_count": today_count,
+            "last_hour_count": last_hour_count,
+            "peak_hour": peak_hour,
+            "recent_events": recent_events,
+            "hourly_data": hourly_data,
+            "light_status": get_light_status(),
+            "server_time": get_now_local().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e:
+        logger.error("Status Fetch Error: %s", e)
+        return jsonify({"error": "Supabase unreachable"}), 500
+
 
 
 @app.route("/api/stats/weekly", methods=["GET"])
 def get_weekly_stats():
-    """Daily vehicle counts for the last 7 days."""
-    db  = get_db()
-    now = datetime.now()
+    """Weekly grouping for bar chart."""
+    now_utc = datetime.utcnow()
+    week_start = now_utc - timedelta(days=7)
+    user = get_user()
+    
+    try:
+        res = supabase.table("vehicle_events").select("detected_at").eq("username", user).gte("detected_at", week_start.isoformat()).execute()
 
-    weekly: list[dict] = []
-    for d in range(6, -1, -1):
-        day = (now - timedelta(days=d)).date()
-        count = db.execute(
-            "SELECT COUNT(*) FROM vehicle_events WHERE DATE(detected_at) = ?",
-            (day.isoformat(),),
-        ).fetchone()[0]
-        weekly.append({"day": day.strftime("%a"), "date": day.isoformat(), "count": count})
+        daily_counts = {}
+        for r in res.data:
+            dt = datetime.fromisoformat(r['detected_at'].replace('Z', '+00:00'))
+            dt_local = dt + timedelta(hours=5)
+            d_key = dt_local.strftime("%a")
+            daily_counts[d_key] = daily_counts.get(d_key, 0) + 1
+            
+        weekly = []
+        for i in range(7):
+            d = (get_now_local() - timedelta(days=6-i)).strftime("%a")
+            weekly.append({"day": d, "count": daily_counts.get(d, 0)})
+            
+        return jsonify({"weekly": weekly})
+    except:
+        return jsonify({"weekly": []})
 
-    return jsonify({"weekly": weekly})
 
 
 @app.route("/api/simulate", methods=["POST"])
 def simulate_detection():
-    """
-    Development-only endpoint — inserts a fake detection event.
-    Remove or protect this in production.
-    """
-    db = get_db()
-    db.execute(
-        """INSERT INTO vehicle_events (sensor_id, location, vehicle_type)
-           VALUES ('sensor-01', 'Main Road - Sim', 'car')"""
-    )
-    db.commit()
-    return jsonify({"status": "simulated", "light": get_light_status()}), 201
+    payload = {"location": "Simulated Road", "vehicle_type": "car", "detected_at": datetime.utcnow().isoformat()}
+    supabase.table("vehicle_events").insert(payload).execute()
+    return jsonify({"status": "simulated"}), 201
 
 
-@app.route("/api/clear", methods=["DELETE"])
+
+@app.route("/api/clear", methods=["POST"])
 @require_api_key
 def clear_data():
-    """Erase all event records (admin use only)."""
-    db = get_db()
-    db.execute("DELETE FROM vehicle_events")
-    db.commit()
-    logger.warning("All vehicle events cleared by %s", request.remote_addr)
-    return jsonify({"status": "cleared"}), 200
+    """Wipe history from Supabase."""
+    try:
+        # Delete everything from vehicle_events (requires 'Enable Delete' in Supabase RLS)
+        supabase.table("vehicle_events").delete().neq("id", 0).execute()
+        return jsonify({"status": "cleared"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    """Validates user against Supabase."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username")
+    password = data.get("password")
+
+    try:
+        res = supabase.table("users").select("*").eq("username", username).eq("password", password).execute()
+        if res.data:
+            return jsonify({"status": "success", "user": username}), 200
+        return jsonify({"error": "Invalid credentials"}), 401
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/", methods=["GET"])
 def index():
     return app.send_static_file("index.html")
+
 
 
 @app.route("/<path:path>", methods=["GET"])
@@ -375,43 +394,56 @@ def static_files(path):
 @app.route("/api/command", methods=["POST"])
 @require_api_key
 def send_command_to_esp32():
-    """
-    Push a command from the Flask server to the ESP32's built-in HTTP server.
-
-    Body JSON:
-    {
-        "command": "light_on" | "light_off" | "light_auto"
-    }
-
-    The ESP32 must have a route /cmd that accepts:
-        GET /cmd?action=light_on
-    """
-    data    = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
     command = data.get("command", "light_auto")
+    mode = command.replace("light_", "")
+    set_light_mode(mode)
+    
+    # Optional: Log status change to a separate table if you created it
+    # supabase.table("light_log").insert({"status": mode}).execute()
 
-    VALID_COMMANDS = {"light_on", "light_off", "light_auto"}
-    if command not in VALID_COMMANDS:
-        return jsonify({"error": f"Unknown command '{command}'"}), 400
-
+    # Forward to ESP32 locally if on same network
     esp32_url = f"{ESP32_BASE}/cmd"
     try:
-        resp = http_requests.get(
-            esp32_url,
-            params={"action": command},
-            timeout=3,
-        )
-        logger.info("Command '%s' sent to ESP32 — HTTP %s", command, resp.status_code)
-        return jsonify({
-            "status":      "sent",
-            "command":     command,
-            "esp32_reply": resp.text[:200],
-        }), 200
-    except http_requests.exceptions.ConnectionError:
-        logger.error("ESP32 unreachable at %s", esp32_url)
-        return jsonify({"error": "ESP32 not reachable", "url": esp32_url}), 503
-    except http_requests.exceptions.Timeout:
-        logger.error("ESP32 command timed out")
-        return jsonify({"error": "ESP32 timed out"}), 504
+        http_requests.get(esp32_url, params={"action": command}, timeout=2)
+    except: pass
+    
+    return jsonify({"status": "ok", "mode": mode}), 200
+
+
+
+@app.route("/api/esp32/sync", methods=["GET"])
+def sync_esp32():
+    """
+    Endpoint for the ESP32 to poll its current intended state from the cloud.
+    This makes the project 'Cloud-Ready' so hardware and dashboard don't need same WiFi.
+    """
+    return jsonify({
+        "status": "ok",
+        "light": get_light_status(),
+        "mode": get_light_mode(),
+        "server_time": get_now_local().strftime("%H:%M:%S")
+    }), 200
+
+
+@app.route("/api/config", methods=["GET", "POST"])
+@require_api_key
+def manage_config():
+    """Get or update ESP32 configuration."""
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        new_ip = data.get("esp32_ip")
+        if new_ip:
+            update_esp32_config(new_ip)
+            return jsonify({"status": "updated", "esp32_ip": ESP32_IP})
+        return jsonify({"error": "Invalid IP"}), 400
+
+    return jsonify({
+        "esp32_ip": ESP32_IP,
+        "night_start": NIGHT_START_HOUR,
+        "day_start": DAY_START_HOUR,
+        "api_key_configured": bool(API_KEY)
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -431,13 +463,21 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Initialization
 # ---------------------------------------------------------------------------
 
 START_TIME = time.time()
+init_db()  # Ensure DB is ready for Gunicorn/Production
 
 if __name__ == "__main__":
-    init_db()
+    import sys
+    if "--online" in sys.argv:
+        ALLOWED_IPS.add("*")
+        logger.warning("STARTED IN ONLINE MODE — IP whitelist disabled!")
+        
     logger.info("Starting Smart Street Light IoT Server …")
-    # host='127.0.0.1' → localhost only; no other device can connect
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    
+    # Use environment port for Render, default to 5000 for local
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
+

@@ -36,6 +36,12 @@ Server starts at → **http://localhost:5000**
 ### 3. Open the Dashboard
 Navigate to **http://localhost:5000** in your browser.
 
+### 4. Make it Available Online
+To expose your dashboard to the internet so you can view it from anywhere (like your phone):
+1. Double click the **`start_online.bat`** file.
+2. It will start the server and run `localtunnel`, providing you with a public URL (e.g. `https://some-random-words.loca.lt`).
+3. Note: The first time you visit the link, it might ask for your "Tunnel Password". Your password is the IP address of your machine, which localtunnel will display on the page.
+
 ---
 
 ## 🔌 API Endpoints
